@@ -10,9 +10,12 @@ RUN apt-get update && apt-get install -y openssh-server \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/run/sshd
 
-# Patch the entrypoint to not remove /tmp/.X11-unix
-RUN sed -i 's|rm -rf /tmp/.X\*|rm -f /tmp/.X0-lock /tmp/.X11-unix/X0|g' /etc/base-entrypoint.sh
+# Install d3dcompiler_43 as wineuser at build time
+USER wineuser
+RUN Xvfb :0 -ac -screen 0 1920x1200x24 & sleep 2 && \
+    DISPLAY=:0 WINEDLLOVERRIDES="d3dcompiler_43=n" winetricks -q d3dcompiler_43
 
+USER root
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
 
