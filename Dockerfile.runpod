@@ -2,23 +2,62 @@ FROM jadlakkis/tmnf-docker-base:latest
 
 USER root
 
-RUN chmod 755 /root && chown root:root /root
+ENV DEBIAN_FRONTEND=noninteractive
 
-RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
+# ---- Install Vulkan + DXVK ----
+RUN apt-get update && apt-get install --no-install-recommends -y \
+        libvulkan1 vulkan-tools curl && \
+    rm -rf /var/lib/apt/lists/* && \
+    VULKAN_API_VERSION=$(dpkg -s libvulkan1 | grep -oP 'Version: [0-9|\.]+' | grep -oP '[0-9]+(\.[0-9]+)(\.[0-9]+)') && \
+    mkdir -p /etc/vulkan/icd.d/ && \
+    printf '{\n  "file_format_version" : "1.0.0",\n  "ICD": {\n    "library_path": "libGLX_nvidia.so.0",\n    "api_version" : "%s"\n  }\n}\n' "$VULKAN_API_VERSION" > /etc/vulkan/icd.d/nvidia_icd.json
 
-RUN apt-get update && apt-get install -y openssh-server \
+# Install DXVK for wine
+ARG DXVK_VERSION="2.6.1"
+ARG DXVK_STORE_PATH=/usr/local/bin/dxvk
+RUN mkdir -p /tmp/dxvk && \
+    cd /tmp/dxvk && \
+    curl -L "https://github.com/doitsujin/dxvk/releases/download/v${DXVK_VERSION}/dxvk-${DXVK_VERSION}.tar.gz" -o dxvk.tar.gz && \
+    tar -xzf dxvk.tar.gz && \
+    cd dxvk-${DXVK_VERSION} && \
+    mkdir -p ${DXVK_STORE_PATH} && \
+    cp -r x32 ${DXVK_STORE_PATH} && \
+    rm -rf /tmp/dxvk
+
+# ---- Apply DXVK to the wineuser prefix ----
+USER wineuser
+WORKDIR /home/wineuser
+RUN xvfb-run --auto-servernum wineboot && \
+    cp ${DXVK_STORE_PATH}/x32/*.dll /home/wineuser/.wine/drive_c/windows/system32/ && \
+    before=$(stat -c '%Y' /home/wineuser/.wine/user.reg) && \
+    for dll in $(find ${DXVK_STORE_PATH} -name '*.dll'); do \
+        wine reg add "HKEY_CURRENT_USER\\Software\\Wine\\DllOverrides" /v "$(basename "${dll%.*}")" /d native /f; \
+    done && \
+    while [ "$(stat -c '%Y' /home/wineuser/.wine/user.reg)" = "$before" ]; do sleep 1; done && \
+    winetricks -q d3dcompiler_43
+
+# ---- Install Python + PyTorch + Linesight prerequisites ----
+USER root
+RUN apt-get update && apt-get install -y \
+        python3 python3-pip python3-venv git \
+        openssh-server \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/run/sshd
 
-# Install d3dcompiler_43 as wineuser at build time
-USER wineuser
-RUN Xvfb :0 -ac -screen 0 1920x1200x24 & sleep 2 && \
-    DISPLAY=:0 WINEDLLOVERRIDES="d3dcompiler_43=n" winetricks -q d3dcompiler_43
+# Install PyTorch with CUDA 12.1 + common ML deps
+RUN pip3 install --no-cache-dir --break-system-packages \
+        torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 \
+    && pip3 install --no-cache-dir --break-system-packages \
+        numpy pandas matplotlib tensorboard pyyaml psutil
 
-USER root
+# ---- Permissions and X11 fixes ----
+RUN chmod 755 /root && chown root:root /root && \
+    mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
+
+# ---- Startup script ----
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
 
-EXPOSE 22 5900
+EXPOSE 22 5900 5901 6006
 
 CMD ["/start.sh"]
