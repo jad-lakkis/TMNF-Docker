@@ -36,19 +36,13 @@ RUN xvfb-run --auto-servernum wineboot && \
     while [ "$(stat -c '%Y' /home/wineuser/.wine/user.reg)" = "$before" ]; do sleep 1; done && \
     winetricks -q d3dcompiler_43
 
-# ---- Install Python + PyTorch + Linesight prerequisites ----
+# ---- Install Python + SSH (PyTorch will be installed at runtime to save image size) ----
 USER root
 RUN apt-get update && apt-get install -y \
         python3 python3-pip python3-venv git \
         openssh-server \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/run/sshd
-
-# Install PyTorch with CUDA 12.1 + common ML deps
-RUN pip3 install --no-cache-dir --break-system-packages \
-        torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 \
-    && pip3 install --no-cache-dir --break-system-packages \
-        numpy pandas matplotlib tensorboard pyyaml psutil
 
 # ---- Permissions and X11 fixes ----
 RUN chmod 755 /root && chown root:root /root && \
